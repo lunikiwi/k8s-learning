@@ -1,0 +1,76 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Argo CD root Application (GitOps entry point)
+#
+#   Git repo  ──►  path "k8s"  ──►  namespace "default" of the local cluster
+#
+# Argo CD continuously reconciles the cluster against this Git path:
+#   * automated  → new commits are applied without manual "argocd app sync"
+#   * selfHeal   → manual "kubectl edit/scale" changes are reverted
+#   * prune      → resources deleted from Git are deleted from the cluster
+#
+# ⚠️  REQUIRED CHANGE BEFORE USE ⚠️
+# Replace spec.source.repoURL below with YOUR repository URL, e.g.
+#     https://github.com/jane-doe/k8s-learning.git
+# and push the "k8s/" directory to it. Argo CD pulls from Git — it does NOT
+# read your local working copy.
+#
+# Apply with:
+#     kubectl apply -f argocd-app.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: k8s-learning
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: k8s-learning
+    app.kubernetes.io/part-of: k8s-learning
+  # Keep the Application object alive until Argo CD has pruned its children.
+  # Without this finalizer, "kubectl delete application" orphans the workloads.
+  # The "/" form is the domain-qualified variant; kubectl warns about the
+  # unqualified "resources-finalizer.argocd.argoproj.io".
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io/foreground
+spec:
+  project: default
+
+  source:
+    # ▼▼▼ PLACEHOLDER — REPLACE WITH YOUR OWN REPOSITORY URL ▼▼▼
+    repoURL: https://github.com/DEIN_USERNAME/DEIN_REPO.git
+    # ▲▲▲ PLACEHOLDER — REPLACE WITH YOUR OWN REPOSITORY URL ▲▲▲
+    # Branch, tag or commit SHA. "HEAD" follows the repo's default branch.
+    targetRevision: HEAD
+    # Directory inside the repo holding the plain Kubernetes manifests.
+    path: k8s
+    directory:
+      recurse: false
+
+  destination:
+    # "in-cluster" shorthand for the cluster Argo CD itself runs in.
+    server: https://kubernetes.default.svc
+    namespace: default
+
+  syncPolicy:
+    automated:
+      # Delete cluster resources that no longer exist in Git.
+      prune: true
+      # Revert out-of-band changes (kubectl edit / scale) back to Git state.
+      selfHeal: true
+      # Do not sync away the whole app if Git returns zero manifests
+      # (protects against an accidentally emptied/misconfigured path).
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      # Use "kubectl apply --server-side": avoids the 262 kB annotation limit
+      # and conflicts on large CRDs.
+      - ServerSideApply=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  revisionHistoryLimit: 10

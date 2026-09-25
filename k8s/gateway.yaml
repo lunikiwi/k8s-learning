@@ -1,0 +1,167 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# gateway-service — entry point of the request chain.
+#   GET /ping     → calls processor-service, aggregates the whole chain
+#   GET /healthz  → { status: "ok" }
+#
+# This file ships three objects:
+#   1. Deployment       gateway-service
+#   2. Service          gateway-service      (ClusterIP — in-cluster access)
+#   3. Service          gateway-service-lb   (LoadBalancer — host access via k3d)
+#   4. Ingress          gateway-service      (Traefik — host access via :80)
+#
+# Why both a LoadBalancer Service and an Ingress?
+#   * k3d creates the cluster with "-p 8080:8080@loadbalancer". That mapping
+#     forwards host port 8080 to node port 8080, and only a Service of type
+#     LoadBalancer (k3s klipper-lb opens the matching hostPort) listens there.
+#     → curl http://localhost:8080/ping works out of the box.
+#   * The Ingress goes through Traefik on node port 80, which bootstrap.sh maps
+#     to host port 8081 ("-p 8081:80@loadbalancer").
+#     → curl http://localhost:8081/ping works as well.
+#   * The plain ClusterIP Service stays the canonical in-cluster name.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-service
+  labels:
+    app: gateway-service
+    app.kubernetes.io/name: gateway-service
+    app.kubernetes.io/part-of: k8s-learning
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: gateway-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: gateway-service
+        app.kubernetes.io/name: gateway-service
+        app.kubernetes.io/part-of: k8s-learning
+        app.kubernetes.io/component: gateway
+    spec:
+      terminationGracePeriodSeconds: 20
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gateway-service
+          image: gateway-service:latest
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "8080"
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # In-cluster DNS name of the processor Service (same namespace).
+            # kube-proxy load balances this across both processor replicas.
+            - name: PROCESSOR_SERVICE_URL
+              value: "http://processor-service:8080/process"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 1
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+---
+# Canonical in-cluster Service. Also the target of "kubectl port-forward".
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-service
+  labels:
+    app: gateway-service
+    app.kubernetes.io/name: gateway-service
+    app.kubernetes.io/part-of: k8s-learning
+spec:
+  type: ClusterIP
+  selector:
+    app: gateway-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+# Makes the k3d port mapping "8080:8080@loadbalancer" actually resolve to a
+# listener: k3s' built-in servicelb (klipper-lb) opens hostPort 8080 on every
+# node, and the k3d serverlb container proxies the host port to it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-service-lb
+  labels:
+    app: gateway-service
+    app.kubernetes.io/name: gateway-service
+    app.kubernetes.io/part-of: k8s-learning
+spec:
+  type: LoadBalancer
+  selector:
+    app: gateway-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+# Traefik Ingress (k3s ships Traefik by default).
+# Host-less rule → matches any Host header, so plain "localhost" works.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway-service
+  labels:
+    app: gateway-service
+    app.kubernetes.io/name: gateway-service
+    app.kubernetes.io/part-of: k8s-learning
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway-service
+                port:
+                  number: 8080

@@ -1,0 +1,17 @@
+# Go build artifacts
+services/gateway/gateway-service
+services/processor/processor-service
+services/storage/storage-service
+*.test
+*.out
+*.prof
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,6 @@
+# Ignore local build artifacts and IDE files
+gateway-service
+*.test
+*.out
+.git
+.gitignore

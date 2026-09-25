@@ -1,0 +1,15 @@
+# Force LF line endings for everything that is consumed by Linux tooling.
+# Without this, files authored on Windows get CRLF, which makes gofmt report
+# every Go file as unformatted and can break Makefile recipes and shell
+# scripts inside Docker containers.
+* text=auto eol=lf
+
+*.go      text eol=lf
+go.mod    text eol=lf
+go.sum    text eol=lf
+Makefile  text eol=lf
+Dockerfile text eol=lf
+*.sh      text eol=lf
+*.yaml    text eol=lf
+*.yml     text eol=lf
+*.md      text eol=lf

@@ -1,0 +1,109 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# storage-service — leaf of the request chain.
+#   GET /data    → { status, message, pod }
+#   GET /healthz → { status: "ok" }
+#
+# The image is built locally and imported into k3d ("k3d image import"), so
+# imagePullPolicy MUST be "Never" — otherwise the kubelet tries to pull
+# "docker.io/library/storage-service:latest" and the pod ends in ErrImagePull.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storage-service
+  labels:
+    app: storage-service
+    app.kubernetes.io/name: storage-service
+    app.kubernetes.io/part-of: k8s-learning
+    app.kubernetes.io/component: storage
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: storage-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: storage-service
+        app.kubernetes.io/name: storage-service
+        app.kubernetes.io/part-of: k8s-learning
+        app.kubernetes.io/component: storage
+    spec:
+      # The Go servers handle SIGTERM and shut down gracefully within ~15s.
+      terminationGracePeriodSeconds: 20
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: storage-service
+          image: storage-service:latest
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "8080"
+            # HOSTNAME is injected by the kubelet anyway; making it explicit
+            # keeps the pod name visible in the JSON payload regardless.
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 1
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storage-service
+  labels:
+    app: storage-service
+    app.kubernetes.io/name: storage-service
+    app.kubernetes.io/part-of: k8s-learning
+spec:
+  type: ClusterIP
+  selector:
+    app: storage-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
